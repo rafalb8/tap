@@ -17,5 +17,5 @@ type Frame struct {
 	*http.Response
 
 	Timestamp time.Time
-	Body      string
+	Body      []byte
 }

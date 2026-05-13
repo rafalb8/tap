@@ -1,13 +1,14 @@
 package log
 
 import (
+	"bufio"
 	"bytes"
 	"context"
-	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"time"
-	"unsafe"
 
 	"github.com/elazarl/goproxy"
 )
@@ -24,9 +25,8 @@ func (s *Standard) Handle(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Resp
 	}
 
 	if resp.Body != nil {
-		data, _ := io.ReadAll(resp.Body)
-		f.Body = unsafe.String(unsafe.SliceData(data), len(data))
-		resp.Body = io.NopCloser(bytes.NewBuffer(data))
+		f.Body, _ = io.ReadAll(resp.Body)
+		resp.Body = io.NopCloser(bytes.NewBuffer(f.Body))
 	}
 
 	s.Channel <- f
@@ -37,15 +37,46 @@ func (s *Standard) Log(ctx context.Context) {
 	for {
 		select {
 		case f := <-s.Channel:
-			fmt.Fprintf(s.Writer, "[%s] %s\t→ %s | %s\n",
-				f.Timestamp.Format(time.TimeOnly),
-				f.Request.Method, f.Request.URL, f.Status,
-			)
-			if len(f.Body) > 0 {
-				fmt.Fprintln(s.Writer, f.Body)
-			}
+			s.Write(f)
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func (s *Standard) Write(f Frame) {
+	buf := bufio.NewWriter(s.Writer)
+
+	// [10:31:05] POST → https://api.example.com/v1/auth | 200 OK
+	buf.WriteByte('[')
+	buf.WriteString(f.Timestamp.Format(time.TimeOnly))
+	buf.WriteString("] ")
+	buf.WriteString(f.Request.Method)
+	buf.WriteString("\t→ ")
+	buf.WriteString(f.Request.URL.String())
+	buf.WriteString(" | ")
+	buf.WriteString(f.Status)
+	buf.WriteByte('\n')
+
+	// Headers
+	if len(f.Header) > 0 {
+		keys := slices.Collect(maps.Keys(f.Header))
+		slices.Sort(keys)
+		for _, key := range keys {
+			buf.WriteString(key)
+			buf.WriteString(": ")
+			for _, v := range f.Header[key] {
+				buf.WriteString(v)
+				buf.WriteByte(' ')
+			}
+			buf.WriteByte('\n')
+		}
+	}
+
+	if len(f.Body) > 0 {
+		buf.Write(f.Body)
+		buf.WriteByte('\n')
+	}
+
+	buf.Flush()
 }
