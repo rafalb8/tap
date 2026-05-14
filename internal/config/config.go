@@ -11,9 +11,10 @@ import (
 
 // Flags
 var (
-	Json   bool
-	Simple bool
-	Cert   string
+	Json    bool
+	Simple  bool
+	Verbose bool
+	Cert    string
 )
 
 var (
@@ -24,6 +25,7 @@ var (
 func init() {
 	flag.BoolVar(&Json, "json", false, "json mode")
 	flag.BoolVar(&Simple, "simple", false, "simple mode")
+	flag.BoolVar(&Verbose, "v", false, "verbose info")
 	flag.StringVar(&Cert, "cert", filepath.Join(os.TempDir(), "tap-ca.pem"), "proxy cert")
 
 	flags := os.Args[1:]
