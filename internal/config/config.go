@@ -14,7 +14,9 @@ var (
 	Json    bool
 	Simple  bool
 	Verbose bool
-	Cert    string
+
+	Cert   string
+	Output string
 )
 
 var (
@@ -27,6 +29,7 @@ func init() {
 	flag.BoolVar(&Simple, "simple", false, "simple mode")
 	flag.BoolVar(&Verbose, "v", false, "verbose info")
 	flag.StringVar(&Cert, "cert", filepath.Join(os.TempDir(), "tap-ca.pem"), "proxy cert")
+	flag.StringVar(&Output, "o", "", "output path; enables std outputs")
 
 	flags := os.Args[1:]
 	split := slices.Index(os.Args, "--")

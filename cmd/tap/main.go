@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -35,19 +36,33 @@ func StartServer(l log.Logger) (*http.Server, error) {
 	return srv, nil
 }
 
+func NewLogger(w io.Writer) log.Logger {
+	c := make(chan log.Frame, 8)
+	switch {
+	case config.Json:
+		return &log.Json{Writer: w, Channel: c}
+	case config.Simple:
+		return &log.Simple{Writer: w, Channel: c}
+	default:
+		return &log.Standard{Writer: w, Channel: c}
+	}
+}
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	var l log.Logger
-	switch {
-	case config.Json:
-		l = &log.Json{Writer: os.Stdout, Channel: make(chan log.Frame, 8)}
-	case config.Simple:
-		l = &log.Simple{Writer: os.Stdout, Channel: make(chan log.Frame, 8)}
-	default:
-		l = &log.Standard{Writer: os.Stdout, Channel: make(chan log.Frame, 8)}
+	w := os.Stdout
+	if config.Output != "" {
+		f, err := os.OpenFile(config.Output, os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+		w = f
 	}
+
+	l := NewLogger(w)
 	go l.Log(ctx)
 
 	srv, err := StartServer(l)
@@ -56,13 +71,15 @@ func main() {
 	}
 
 	cmd := exec.CommandContext(ctx, config.Name, config.Args...)
-	cmd.Env = []string{
-		"SSL_CERT_FILE=" + config.Cert,
-		"ALL_PROXY=" + srv.Addr,
+	cmd.Env = append(os.Environ(),
+		"SSL_CERT_FILE="+config.Cert,
+		"ALL_PROXY="+srv.Addr,
 		"NO_PROXY=localhost,127.0.0.1",
+	)
+	if config.Output != "" {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
 	}
-	// cmd.Stdout = os.Stdout
-	// cmd.Stderr = os.Stderr
 
 	err = cmd.Run()
 	if err != nil {
