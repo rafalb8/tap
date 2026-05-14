@@ -1,7 +1,6 @@
 package log
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,34 +10,22 @@ import (
 )
 
 type Json struct {
-	Writer  io.Writer
-	Channel chan Frame
+	Writer io.Writer
 }
 
-func (s *Json) Handle(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+func (j *Json) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	panic("TODO")
+}
+
+func (j *Json) Response(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
 	if resp == nil {
 		panic("Response is nil")
 	}
 
-	s.Channel <- Frame{
-		Timestamp: time.Now(),
-		Response:  resp,
-	}
+	fmt.Fprintf(j.Writer,
+		`{"timestamp":"%s", "method": "%s", "url":"%s", "status": "%s"}`+"\n",
+		time.Now().Format(time.RFC3339),
+		resp.Request.Method, resp.Request.URL, resp.Status,
+	)
 	return resp
-}
-
-func (s *Json) Log(ctx context.Context) {
-	for {
-		select {
-		case f := <-s.Channel:
-			// [10:31:05] POST → https://api.example.com/v1/auth | 200 OK (45ms)
-			fmt.Fprintf(s.Writer, `{"timestamp":"%s", "method": "%s", "url":"%s", "status": "%s"}`,
-				f.Timestamp.Format(time.RFC3339),
-				f.Request.Method, f.Request.URL, f.Status,
-			)
-			fmt.Fprintln(s.Writer)
-		case <-ctx.Done():
-			return
-		}
-	}
 }

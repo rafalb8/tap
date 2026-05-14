@@ -1,7 +1,6 @@
 package log
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,33 +10,22 @@ import (
 )
 
 type Simple struct {
-	Writer  io.Writer
-	Channel chan Frame
+	Writer io.Writer
 }
 
-func (s *Simple) Handle(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+func (s *Simple) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	panic("TODO")
+}
+
+func (s *Simple) Response(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
 	if resp == nil {
 		panic("Response is nil")
 	}
+	// [10:31:05] POST → https://api.example.com/v1/auth | 200 OK
+	fmt.Fprintf(s.Writer, "[%s] %s\t→ %s | %s\n",
+		time.Now().Format(time.TimeOnly),
+		resp.Request.Method, resp.Request.URL, resp.Status,
+	)
 
-	s.Channel <- Frame{
-		Timestamp: time.Now(),
-		Response:  resp,
-	}
 	return resp
-}
-
-func (s *Simple) Log(ctx context.Context) {
-	for {
-		select {
-		case f := <-s.Channel:
-			// [10:31:05] POST → https://api.example.com/v1/auth | 200 OK
-			fmt.Fprintf(s.Writer, "[%s] %s\t→ %s | %s\n",
-				f.Timestamp.Format(time.TimeOnly),
-				f.Request.Method, f.Request.URL, f.Status,
-			)
-		case <-ctx.Done():
-			return
-		}
-	}
 }

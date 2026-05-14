@@ -2,7 +2,6 @@ package log
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"iter"
@@ -18,93 +17,46 @@ import (
 )
 
 type Standard struct {
-	Writer  io.Writer
-	Channel chan Frame
+	Writer io.Writer
 }
 
-func (s *Standard) Handle(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+func (s *Standard) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	panic("TODO")
+}
+
+func (s *Standard) Response(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
 	if resp == nil {
 		panic("Response is nil")
 	}
 
-	f := Frame{
-		Timestamp: time.Now(),
-		Response:  resp,
-	}
+	buf := &bytes.Buffer{}
+	s.writeResponse(buf, resp)
+	s.writeHeaders(buf, resp)
+	s.writeBody(buf, resp)
+	buf.WriteTo(s.Writer)
 
-	if resp.Body != nil {
-		f.Body, _ = io.ReadAll(resp.Body)
-		resp.Body = io.NopCloser(bytes.NewBuffer(f.Body))
-	}
-
-	s.Channel <- f
 	return resp
 }
 
-func (s *Standard) Log(ctx context.Context) {
-	for {
-		select {
-		case f := <-s.Channel:
-			s.Write(f)
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func (s *Standard) Write(f Frame) {
-	buf := &bytes.Buffer{}
-	defer buf.WriteTo(s.Writer)
-
+func (s *Standard) writeResponse(buf *bytes.Buffer, resp *http.Response) {
 	// [10:31:05] POST → https://api.example.com/v1/auth | 200 OK
 	buf.WriteByte('[')
-	buf.WriteString(f.Timestamp.Format(time.TimeOnly))
+	buf.WriteString(time.Now().Format(time.TimeOnly))
 	buf.WriteString("] ")
-	buf.WriteString(f.Request.Method)
+	buf.WriteString(resp.Request.Method)
 	buf.WriteString("\t→ ")
-	buf.WriteString(f.Request.URL.String())
+	buf.WriteString(resp.Request.URL.String())
 	buf.WriteString(" | ")
-	buf.WriteString(f.Status)
+	buf.WriteString(resp.Status)
 	buf.WriteByte('\n')
-
-	// Headers
-	if len(f.Header) > 0 {
-		s.writeHeaders(buf, f)
-	}
-
-	if len(f.Body) > 0 {
-		ct := f.Header.Get("Content-Type")
-		ct, _, _ = strings.Cut(ct, ";")
-		typ, subTyp, _ := strings.Cut(ct, "/")
-		switch typ {
-		case "image", "audio", "video":
-			buf.WriteString("[Binary data: ")
-			buf.WriteString(subTyp)
-			buf.WriteByte(' ')
-			buf.WriteString(typ)
-			buf.WriteString(", ")
-			WriteBytes(buf, len(f.Body))
-			buf.WriteString("]\n")
-			return
-		case "multipart":
-			buf.WriteString("[Binary data: ")
-			WriteBytes(buf, len(f.Body))
-			buf.WriteString("]\n")
-			return
-		}
-
-		switch subTyp {
-		case "json":
-			json.Indent(buf, f.Body, "", "  ")
-		default:
-			buf.Write(f.Body)
-			buf.WriteByte('\n')
-		}
-	}
 }
 
-func (s *Standard) writeHeaders(buf *bytes.Buffer, f Frame) {
-	it := maps.Keys(f.Header)
+func (s *Standard) writeHeaders(buf *bytes.Buffer, resp *http.Response) {
+	if resp.Header == nil {
+		return
+	}
+
+	it := maps.Keys(resp.Header)
 	if !config.Verbose {
 		it = s.filterHeaders(it)
 	}
@@ -113,10 +65,47 @@ func (s *Standard) writeHeaders(buf *bytes.Buffer, f Frame) {
 	for _, key := range keys {
 		buf.WriteString(key)
 		buf.WriteString(": ")
-		for _, v := range f.Header[key] {
+		for _, v := range resp.Header[key] {
 			buf.WriteString(v)
 			buf.WriteByte(' ')
 		}
+		buf.WriteByte('\n')
+	}
+}
+
+func (s *Standard) writeBody(buf *bytes.Buffer, resp *http.Response) {
+	if resp.Body == nil {
+		return
+	}
+
+	data, _ := io.ReadAll(resp.Body)
+	resp.Body = io.NopCloser(bytes.NewBuffer(data))
+
+	ct := resp.Header.Get("Content-Type")
+	ct, _, _ = strings.Cut(ct, ";")
+	typ, subTyp, _ := strings.Cut(ct, "/")
+	switch typ {
+	case "image", "audio", "video":
+		buf.WriteString("[Binary data: ")
+		buf.WriteString(subTyp)
+		buf.WriteByte(' ')
+		buf.WriteString(typ)
+		buf.WriteString(", ")
+		WriteBytes(buf, len(data))
+		buf.WriteString("]\n")
+		return
+	case "multipart":
+		buf.WriteString("[Binary data: ")
+		WriteBytes(buf, len(data))
+		buf.WriteString("]\n")
+		return
+	}
+
+	switch subTyp {
+	case "json":
+		json.Indent(buf, data, "", "  ")
+	default:
+		buf.Write(data)
 		buf.WriteByte('\n')
 	}
 }

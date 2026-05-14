@@ -18,7 +18,8 @@ import (
 func StartServer(l log.Logger) (*http.Server, error) {
 	prxy := goproxy.NewProxyHttpServer()
 	prxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
-	prxy.OnResponse().Do(l)
+	// prxy.OnRequest().DoFunc(l.Request)
+	prxy.OnResponse().DoFunc(l.Response)
 
 	// Find free port
 	ln, err := net.Listen("tcp", ":0")
@@ -37,14 +38,13 @@ func StartServer(l log.Logger) (*http.Server, error) {
 }
 
 func NewLogger(w io.Writer) log.Logger {
-	c := make(chan log.Frame, 8)
 	switch {
 	case config.Json:
-		return &log.Json{Writer: w, Channel: c}
+		return &log.Json{Writer: w}
 	case config.Simple:
-		return &log.Simple{Writer: w, Channel: c}
+		return &log.Simple{Writer: w}
 	default:
-		return &log.Standard{Writer: w, Channel: c}
+		return &log.Standard{Writer: w}
 	}
 }
 
@@ -63,7 +63,6 @@ func main() {
 	}
 
 	l := NewLogger(w)
-	go l.Log(ctx)
 
 	srv, err := StartServer(l)
 	if err != nil {
