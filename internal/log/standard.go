@@ -19,6 +19,10 @@ type Standard struct {
 }
 
 func (s *Standard) Handle(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+	if resp == nil {
+		panic("Response is nil")
+	}
+
 	f := Frame{
 		Timestamp: time.Now(),
 		Response:  resp,
