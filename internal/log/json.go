@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
+	"maps"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/elazarl/goproxy"
+	"github.com/rafalb8/tap/internal/flag"
 )
 
 type Json struct {
@@ -31,13 +35,18 @@ func (j *Json) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request,
 	}
 	ts := time.Now()
 
+	it := maps.All(req.Header)
+	if !flag.Verbose {
+		it = filterHeaders(it)
+	}
+
 	// encode request
 	enc := json.NewEncoder(j.Writer)
 	enc.Encode(frame{
 		Timestamp: ts,
 		Method:    req.Method,
 		URL:       req.URL.String(),
-		Headers:   req.Header,
+		Headers:   maps.Collect(it),
 	})
 
 	// make request
@@ -48,6 +57,11 @@ func (j *Json) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request,
 	}
 	end := time.Now()
 
+	it = maps.All(resp.Header)
+	if !flag.Verbose {
+		it = filterHeaders(it)
+	}
+
 	// encode response
 	enc.Encode(frame{
 		Timestamp: end,
@@ -55,8 +69,25 @@ func (j *Json) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request,
 		Method:    req.Method,
 		URL:       req.URL.String(),
 		Status:    resp.StatusCode,
-		Headers:   resp.Header,
+		Headers:   maps.Collect(it),
 	})
 
 	return req, resp
+}
+
+func filterHeaders(it iter.Seq2[string, []string]) iter.Seq2[string, []string] {
+	return func(yield func(string, []string) bool) {
+		for k, v := range it {
+			switch {
+			case k == "Content-Type":
+			case k == "Set-Cookie":
+			case strings.HasPrefix(k, "X-"):
+			default:
+				continue
+			}
+			if !yield(k, v) {
+				return
+			}
+		}
+	}
 }

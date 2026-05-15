@@ -60,7 +60,7 @@ func (p *Pretty) writeHeaders(buf *bytes.Buffer, header http.Header) {
 
 	it := maps.Keys(header)
 	if !flag.Verbose {
-		it = p.filterHeaders(it)
+		it = seq2one(filterHeaders(maps.All(header)))
 	}
 	keys := slices.Collect(it)
 	slices.Sort(keys)
@@ -112,16 +112,9 @@ func (p *Pretty) writeBody(buf *bytes.Buffer, ct string, body *io.ReadCloser) {
 	}
 }
 
-func (*Pretty) filterHeaders(it iter.Seq[string]) iter.Seq[string] {
-	return func(yield func(string) bool) {
+func seq2one[K, V any](it iter.Seq2[K, V]) iter.Seq[K] {
+	return func(yield func(K) bool) {
 		for k := range it {
-			switch {
-			case k == "Content-Type":
-			case k == "Set-Cookie":
-			case strings.HasPrefix(k, "X-"):
-			default:
-				continue
-			}
 			if !yield(k) {
 				return
 			}
