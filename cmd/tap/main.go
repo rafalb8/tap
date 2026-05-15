@@ -79,7 +79,7 @@ func main() {
 
 	cmd := exec.CommandContext(ctx, flag.Name, flag.Args...)
 	cmd.Env = append(os.Environ(),
-		"SSL_CERT_FILE="+flag.Cert,
+		"SSL_CERT_FILE="+flag.CertFile,
 		"ALL_PROXY="+srv.Addr,
 		"NO_PROXY=localhost,127.0.0.1",
 	)
