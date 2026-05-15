@@ -1,12 +1,12 @@
 package flag
 
 import (
-	"flag"
 	"os"
 	"path/filepath"
 	"slices"
 
 	"github.com/elazarl/goproxy"
+	"github.com/spf13/pflag"
 )
 
 // Flags
@@ -25,11 +25,11 @@ var (
 )
 
 func init() {
-	flag.BoolVar(&Json, "json", false, "json mode")
-	flag.BoolVar(&Simple, "simple", false, "simple mode")
-	flag.BoolVar(&Verbose, "v", false, "verbose info")
-	flag.StringVar(&Cert, "cert", filepath.Join(os.TempDir(), "tap-ca.pem"), "proxy cert")
-	flag.StringVar(&Output, "o", "", "output path; enables std outputs")
+	pflag.BoolVarP(&Json, "json", "j", false, "json mode")
+	pflag.BoolVarP(&Simple, "simple", "s", false, "simple mode")
+	pflag.BoolVarP(&Verbose, "verbose", "v", false, "print all headers (json/default mode only)")
+	pflag.StringVar(&Cert, "cert", filepath.Join(os.TempDir(), "tap-ca.pem"), "proxy cert")
+	pflag.StringVarP(&Output, "output", "o", "", "output path; enables std outputs")
 
 	flags := os.Args[1:]
 	split := slices.Index(os.Args, "--")
@@ -39,7 +39,7 @@ func init() {
 		Args = os.Args[split+2:]
 	}
 
-	err := flag.CommandLine.Parse(flags)
+	err := pflag.CommandLine.Parse(flags)
 	if err != nil {
 		panic(err)
 	}
