@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/elazarl/goproxy"
-	"github.com/rafalb8/tap/internal/config"
+	"github.com/rafalb8/tap/internal/flag"
 )
 
 type Pretty struct {
@@ -59,7 +59,7 @@ func (p *Pretty) writeHeaders(buf *bytes.Buffer, header http.Header) {
 	}
 
 	it := maps.Keys(header)
-	if !config.Verbose {
+	if !flag.Verbose {
 		it = p.filterHeaders(it)
 	}
 	keys := slices.Collect(it)

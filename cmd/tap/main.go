@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/elazarl/goproxy"
-	"github.com/rafalb8/tap/internal/config"
+	"github.com/rafalb8/tap/internal/flag"
 	"github.com/rafalb8/tap/internal/log"
 )
 
@@ -22,9 +22,9 @@ type Logger interface {
 
 func NewLogger(w io.Writer) Logger {
 	switch {
-	case config.Json:
+	case flag.Json:
 		return &log.Json{Writer: w}
-	case config.Simple:
+	case flag.Simple:
 		return &log.Simple{Writer: w}
 	default:
 		return &log.Pretty{Writer: w}
@@ -63,8 +63,8 @@ func main() {
 	defer cancel()
 
 	w := os.Stdout
-	if config.Output != "" {
-		f, err := os.OpenFile(config.Output, os.O_CREATE|os.O_WRONLY, 0o644)
+	if flag.Output != "" {
+		f, err := os.OpenFile(flag.Output, os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
 			panic(err)
 		}
@@ -77,14 +77,14 @@ func main() {
 		panic(err)
 	}
 
-	cmd := exec.CommandContext(ctx, config.Name, config.Args...)
+	cmd := exec.CommandContext(ctx, flag.Name, flag.Args...)
 	cmd.Env = append(os.Environ(),
-		"SSL_CERT_FILE="+config.Cert,
+		"SSL_CERT_FILE="+flag.Cert,
 		"ALL_PROXY="+srv.Addr,
 		"NO_PROXY=localhost,127.0.0.1",
 	)
 
-	if config.Output != "" {
+	if flag.Output != "" {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
