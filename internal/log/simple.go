@@ -1,7 +1,7 @@
 package log
 
 import (
-	"bytes"
+	"bufio"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,28 +21,35 @@ func (s *Simple) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Reques
 	}
 	ts := time.Now()
 
-	buf := &bytes.Buffer{}
-	writeRequest(buf, req)
-	buf.WriteTo(s.Writer)
+	// print request
+	buf := bufio.NewWriter(s.Writer)
+	writeRequest(buf, req, ts)
+	buf.Flush()
 
+	// make request
 	resp, err := ctx.RoundTrip(req)
 	if err != nil {
 		fmt.Fprintf(s.Writer, "Response error: %v\n", err)
 		return req, nil
 	}
-	latency := time.Since(ts)
+	end := time.Now()
 
-	buf.Reset()
-	writeResponse(buf, resp, latency)
-	buf.WriteTo(s.Writer)
+	// print response
+	writeResponse(buf, resp, end, end.Sub(ts))
+	buf.Flush()
 
 	return req, resp
 }
 
-func writeRequest(buf *bytes.Buffer, req *http.Request) {
+type buffer interface {
+	WriteByte(c byte) error
+	WriteString(s string) (int, error)
+}
+
+func writeRequest(buf buffer, req *http.Request, ts time.Time) {
 	// [10:31:05] POST → https://api.example.com/v1/auth
 	buf.WriteByte('[')
-	buf.WriteString(time.Now().Format(time.TimeOnly))
+	buf.WriteString(ts.Format(time.TimeOnly))
 	buf.WriteString("] ")
 	buf.WriteString(req.Method)
 	buf.WriteString("\t→ ")
@@ -50,10 +57,10 @@ func writeRequest(buf *bytes.Buffer, req *http.Request) {
 	buf.WriteByte('\n')
 }
 
-func writeResponse(buf *bytes.Buffer, resp *http.Response, latency time.Duration) {
+func writeResponse(buf buffer, resp *http.Response, ts time.Time, latency time.Duration) {
 	// [10:31:05] POST ← https://api.example.com/v1/auth | 200 OK (50ms)
 	buf.WriteByte('[')
-	buf.WriteString(time.Now().Format(time.TimeOnly))
+	buf.WriteString(ts.Format(time.TimeOnly))
 	buf.WriteString("] ")
 	buf.WriteString(resp.Request.Method)
 	buf.WriteString("\t← ")

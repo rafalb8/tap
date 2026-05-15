@@ -28,21 +28,24 @@ func (p *Pretty) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Reques
 	}
 	ts := time.Now()
 
+	// print request
 	buf := &bytes.Buffer{}
-	writeRequest(buf, req)
+	writeRequest(buf, req, ts)
 	p.writeHeaders(buf, req.Header)
 	p.writeBody(buf, req.Header.Get("Content-Type"), &req.Body)
 	buf.WriteTo(p.Writer)
 
+	// make request
 	resp, err := ctx.RoundTrip(req)
 	if err != nil {
 		fmt.Fprintf(p.Writer, "Response error: %v\n", err)
 		return req, nil
 	}
-	latency := time.Since(ts)
+	end := time.Now()
 
+	// print response
 	buf.Reset()
-	writeResponse(buf, resp, latency)
+	writeResponse(buf, resp, end, end.Sub(ts))
 	p.writeHeaders(buf, resp.Header)
 	p.writeBody(buf, resp.Header.Get("Content-Type"), &resp.Body)
 	buf.WriteTo(p.Writer)
