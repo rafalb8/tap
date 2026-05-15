@@ -9,43 +9,53 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 
 	"github.com/elazarl/goproxy"
 	"github.com/rafalb8/tap/internal/config"
 	"github.com/rafalb8/tap/internal/log"
 )
 
-func StartServer(l log.Logger) (*http.Server, error) {
-	prxy := goproxy.NewProxyHttpServer()
-	prxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
-	// prxy.OnRequest().DoFunc(l.Request)
-	prxy.OnResponse().DoFunc(l.Response)
-
-	// Find free port
-	ln, err := net.Listen("tcp", ":0")
-	if err != nil {
-		return nil, err
-	}
-
-	srv := &http.Server{Handler: prxy, Addr: ln.Addr().String()}
-	go func() {
-		err = srv.Serve(ln)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			panic(err)
-		}
-	}()
-	return srv, nil
+type Logger interface {
+	Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response)
 }
 
-func NewLogger(w io.Writer) log.Logger {
+func NewLogger(w io.Writer) Logger {
 	switch {
 	case config.Json:
 		return &log.Json{Writer: w}
 	case config.Simple:
 		return &log.Simple{Writer: w}
 	default:
-		return &log.Standard{Writer: w}
+		return &log.Pretty{Writer: w}
 	}
+}
+
+func StartServer(middleware Logger) (*http.Server, error) {
+	prxy := goproxy.NewProxyHttpServer()
+	prxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
+	prxy.OnRequest().DoFunc(middleware.Request)
+
+	// Find free port
+	l, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return nil, err
+	}
+
+	srv := &http.Server{Handler: prxy, Addr: l.Addr().String()}
+	idx := strings.LastIndex(srv.Addr, ":")
+	if idx < 0 {
+		return nil, errors.New("missing port")
+	}
+	srv.Addr = "127.0.0.1" + srv.Addr[idx:]
+
+	go func() {
+		err = srv.Serve(l)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			panic(err)
+		}
+	}()
+	return srv, nil
 }
 
 func main() {
@@ -62,9 +72,7 @@ func main() {
 		w = f
 	}
 
-	l := NewLogger(w)
-
-	srv, err := StartServer(l)
+	srv, err := StartServer(NewLogger(w))
 	if err != nil {
 		panic(err)
 	}
@@ -75,7 +83,9 @@ func main() {
 		"ALL_PROXY="+srv.Addr,
 		"NO_PROXY=localhost,127.0.0.1",
 	)
+
 	if config.Output != "" {
+		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}

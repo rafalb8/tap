@@ -3,6 +3,7 @@ package log
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"iter"
 	"maps"
@@ -16,56 +17,54 @@ import (
 	"github.com/rafalb8/tap/internal/config"
 )
 
-type Standard struct {
+type Pretty struct {
 	Writer io.Writer
 }
 
-func (s *Standard) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-	panic("TODO")
-}
-
-func (s *Standard) Response(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-	if resp == nil {
-		panic("Response is nil")
+func (p *Pretty) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	if req == nil {
+		fmt.Fprintln(p.Writer, "Request is nil")
+		return nil, nil
 	}
+	ts := time.Now()
 
 	buf := &bytes.Buffer{}
-	s.writeResponse(buf, resp)
-	s.writeHeaders(buf, resp)
-	s.writeBody(buf, resp)
-	buf.WriteTo(s.Writer)
+	writeRequest(buf, req)
+	p.writeHeaders(buf, req.Header)
+	p.writeBody(buf, req.Header.Get("Content-Type"), &req.Body)
+	buf.WriteTo(p.Writer)
 
-	return resp
+	resp, err := ctx.RoundTrip(req)
+	if err != nil {
+		fmt.Fprintf(p.Writer, "Response error: %v\n", err)
+		return req, nil
+	}
+	latency := time.Since(ts)
+
+	buf.Reset()
+	writeResponse(buf, resp, latency)
+	p.writeHeaders(buf, resp.Header)
+	p.writeBody(buf, resp.Header.Get("Content-Type"), &resp.Body)
+	buf.WriteTo(p.Writer)
+
+	return req, resp
 }
 
-func (s *Standard) writeResponse(buf *bytes.Buffer, resp *http.Response) {
-	// [10:31:05] POST → https://api.example.com/v1/auth | 200 OK
-	buf.WriteByte('[')
-	buf.WriteString(time.Now().Format(time.TimeOnly))
-	buf.WriteString("] ")
-	buf.WriteString(resp.Request.Method)
-	buf.WriteString("\t→ ")
-	buf.WriteString(resp.Request.URL.String())
-	buf.WriteString(" | ")
-	buf.WriteString(resp.Status)
-	buf.WriteByte('\n')
-}
-
-func (s *Standard) writeHeaders(buf *bytes.Buffer, resp *http.Response) {
-	if resp.Header == nil {
+func (p *Pretty) writeHeaders(buf *bytes.Buffer, header http.Header) {
+	if len(header) == 0 {
 		return
 	}
 
-	it := maps.Keys(resp.Header)
+	it := maps.Keys(header)
 	if !config.Verbose {
-		it = s.filterHeaders(it)
+		it = p.filterHeaders(it)
 	}
 	keys := slices.Collect(it)
 	slices.Sort(keys)
 	for _, key := range keys {
 		buf.WriteString(key)
 		buf.WriteString(": ")
-		for _, v := range resp.Header[key] {
+		for _, v := range header[key] {
 			buf.WriteString(v)
 			buf.WriteByte(' ')
 		}
@@ -73,15 +72,14 @@ func (s *Standard) writeHeaders(buf *bytes.Buffer, resp *http.Response) {
 	}
 }
 
-func (s *Standard) writeBody(buf *bytes.Buffer, resp *http.Response) {
-	if resp.Body == nil {
+func (p *Pretty) writeBody(buf *bytes.Buffer, ct string, body *io.ReadCloser) {
+	data, _ := io.ReadAll(*body)
+	*body = io.NopCloser(bytes.NewBuffer(data))
+
+	if len(data) == 0 {
 		return
 	}
 
-	data, _ := io.ReadAll(resp.Body)
-	resp.Body = io.NopCloser(bytes.NewBuffer(data))
-
-	ct := resp.Header.Get("Content-Type")
 	ct, _, _ = strings.Cut(ct, ";")
 	typ, subTyp, _ := strings.Cut(ct, "/")
 	switch typ {
@@ -91,12 +89,12 @@ func (s *Standard) writeBody(buf *bytes.Buffer, resp *http.Response) {
 		buf.WriteByte(' ')
 		buf.WriteString(typ)
 		buf.WriteString(", ")
-		WriteBytes(buf, len(data))
+		formatBytes(buf, len(data))
 		buf.WriteString("]\n")
 		return
 	case "multipart":
 		buf.WriteString("[Binary data: ")
-		WriteBytes(buf, len(data))
+		formatBytes(buf, len(data))
 		buf.WriteString("]\n")
 		return
 	}
@@ -104,13 +102,14 @@ func (s *Standard) writeBody(buf *bytes.Buffer, resp *http.Response) {
 	switch subTyp {
 	case "json":
 		json.Indent(buf, data, "", "  ")
+		buf.WriteByte('\n')
 	default:
 		buf.Write(data)
 		buf.WriteByte('\n')
 	}
 }
 
-func (*Standard) filterHeaders(it iter.Seq[string]) iter.Seq[string] {
+func (*Pretty) filterHeaders(it iter.Seq[string]) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for k := range it {
 			switch {
@@ -127,7 +126,7 @@ func (*Standard) filterHeaders(it iter.Seq[string]) iter.Seq[string] {
 	}
 }
 
-func WriteBytes(buf *bytes.Buffer, i int) {
+func formatBytes(buf *bytes.Buffer, i int) {
 	const unit = 1000
 
 	if i < unit {
