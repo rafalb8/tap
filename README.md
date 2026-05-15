@@ -13,7 +13,7 @@ It's like `time` or `sudo`, but for HTTP analysis.
 
 ## Installation
 ```sh
-go install github.com/rafalb8/tap/cmd/tap@latest
+go install -trimpath github.com/rafalb8/tap@latest
 ```
 
 ## Usage
