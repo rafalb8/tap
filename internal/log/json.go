@@ -78,13 +78,18 @@ func (j *Json) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request,
 func filterHeaders(it iter.Seq2[string, []string]) iter.Seq2[string, []string] {
 	return func(yield func(string, []string) bool) {
 		for k, v := range it {
-			switch {
-			case k == "Content-Type":
-			case k == "Set-Cookie":
-			case strings.HasPrefix(k, "X-"):
+			if strings.HasPrefix(k, "X-") {
+				goto yield
+			}
+
+			switch k {
+			case "Content-Type", "Set-Cookie", "Location":
+				goto yield
 			default:
 				continue
 			}
+
+		yield:
 			if !yield(k, v) {
 				return
 			}
