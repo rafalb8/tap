@@ -3,6 +3,7 @@ package log
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,20 +64,41 @@ func writeHeaders(buf *bufio.Writer, header http.Header) {
 		return
 	}
 
-	it := maps.Keys(header)
+	it := maps.All(header)
 	if !flag.Verbose {
-		it = seq2one(filterHeaders(maps.All(header)))
+		it = filterHeaders(it)
 	}
-	keys := slices.Collect(it)
-	slices.Sort(keys)
-	for _, key := range keys {
+
+	for key, values := range sortSeq2(it) {
 		buf.WriteString(key)
 		buf.WriteString(": ")
-		for _, v := range header[key] {
+		for _, v := range values {
 			buf.WriteString(v)
 			buf.WriteByte(' ')
 		}
 		buf.WriteByte('\n')
+	}
+}
+
+func sortSeq2[K cmp.Ordered, V any](it iter.Seq2[K, V]) iter.Seq2[K, V] {
+	type pair struct {
+		k K
+		v V
+	}
+	pairs := []pair{}
+	for k, v := range it {
+		pairs = append(pairs, pair{k, v})
+	}
+	slices.SortFunc(pairs, func(x, y pair) int {
+		return cmp.Compare(x.k, y.k)
+	})
+
+	return func(yield func(K, V) bool) {
+		for _, p := range pairs {
+			if !yield(p.k, p.v) {
+				return
+			}
+		}
 	}
 }
 
@@ -90,6 +112,22 @@ func writeBody(buf *bufio.Writer, ct string, body *io.ReadCloser) {
 
 	ct, _, _ = strings.Cut(ct, ";")
 	typ, subTyp, _ := strings.Cut(ct, "/")
+
+	if subTyp == "json" {
+		dst := bytePool.Get().(*bytes.Buffer)
+		defer bytePool.Put(dst)
+		dst.Reset()
+
+		json.Indent(dst, data, "", "  ")
+		dst.WriteTo(buf)
+		buf.WriteByte('\n')
+		return
+	}
+
+	if isBinary(data) {
+		typ = "octet-stream"
+	}
+
 	switch typ {
 	case "image", "audio", "video":
 		buf.WriteString("[Binary data: ")
@@ -100,36 +138,28 @@ func writeBody(buf *bufio.Writer, ct string, body *io.ReadCloser) {
 		formatBytes(buf, len(data))
 		buf.WriteString("]\n")
 		return
-	case "multipart":
+	case "multipart", "octet-stream":
 		buf.WriteString("[Binary data: ")
 		formatBytes(buf, len(data))
 		buf.WriteString("]\n")
 		return
 	}
 
-	switch subTyp {
-	case "json":
-		dst := bytePool.Get().(*bytes.Buffer)
-		defer bytePool.Put(dst)
-		dst.Reset()
-
-		json.Indent(dst, data, "", "  ")
-		dst.WriteTo(buf)
-		buf.WriteByte('\n')
-	default:
-		buf.Write(data)
-		buf.WriteByte('\n')
+	const MAX_LEN = 1024
+	if len(data) > MAX_LEN {
+		buf.Write(data[:MAX_LEN])
+		buf.WriteString("...\n")
+		return
 	}
+
+	buf.Write(data)
+	buf.WriteByte('\n')
 }
 
-func seq2one[K, V any](it iter.Seq2[K, V]) iter.Seq[K] {
-	return func(yield func(K) bool) {
-		for k := range it {
-			if !yield(k) {
-				return
-			}
-		}
-	}
+func isBinary(data []byte) bool {
+	maxScan := min(len(data), 8<<10)
+	data = data[:maxScan]
+	return bytes.IndexByte(data, 0) != -1
 }
 
 func formatBytes(buf *bufio.Writer, i int) {
