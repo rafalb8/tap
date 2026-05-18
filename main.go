@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -18,16 +20,17 @@ import (
 
 type Logger interface {
 	Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response)
+	Response(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response
 }
 
 func NewLogger(w io.Writer) Logger {
 	switch {
 	case flag.Json:
-		return &log.Json{Writer: w}
+		return &log.Json{Encoder: json.NewEncoder(w)}
 	case flag.Simple:
-		return &log.Simple{Writer: w}
+		return &log.Simple{Writer: bufio.NewWriter(w)}
 	default:
-		return &log.Pretty{Writer: w}
+		return &log.Pretty{Writer: bufio.NewWriter(w)}
 	}
 }
 
@@ -35,6 +38,7 @@ func StartServer(middleware Logger) (*http.Server, error) {
 	prxy := goproxy.NewProxyHttpServer()
 	prxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
 	prxy.OnRequest().DoFunc(middleware.Request)
+	prxy.OnResponse().DoFunc(middleware.Response)
 
 	// Find free port
 	l, err := net.Listen("tcp", ":0")

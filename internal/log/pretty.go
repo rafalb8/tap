@@ -1,6 +1,7 @@
 package log
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -11,49 +12,53 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/elazarl/goproxy"
 	"github.com/rafalb8/tap/internal/flag"
 )
 
+var bytePool = sync.Pool{New: func() any { return &bytes.Buffer{} }}
+
 type Pretty struct {
-	Writer io.Writer
+	Writer *bufio.Writer
 }
 
 func (p *Pretty) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	ts := time.Now()
+	ctx.UserData = ts
+
 	if req == nil {
 		fmt.Fprintln(p.Writer, "Request is nil")
 		return nil, nil
 	}
-	ts := time.Now()
 
-	// print request
-	buf := &bytes.Buffer{}
-	writeRequest(buf, req, ts)
-	p.writeHeaders(buf, req.Header)
-	p.writeBody(buf, req.Header.Get("Content-Type"), &req.Body)
-	buf.WriteTo(p.Writer)
+	writeRequest(p.Writer, req, ts)
+	writeHeaders(p.Writer, req.Header)
+	writeBody(p.Writer, req.Header.Get("Content-Type"), &req.Body)
+	p.Writer.Flush()
 
-	// make request
-	resp, err := ctx.RoundTrip(req)
-	if err != nil {
-		fmt.Fprintf(p.Writer, "Response error: %v\n", err)
-		return req, nil
-	}
-	end := time.Now()
-
-	// print response
-	buf.Reset()
-	writeResponse(buf, resp, end, end.Sub(ts))
-	p.writeHeaders(buf, resp.Header)
-	p.writeBody(buf, resp.Header.Get("Content-Type"), &resp.Body)
-	buf.WriteTo(p.Writer)
-
-	return req, resp
+	return req, nil
 }
 
-func (p *Pretty) writeHeaders(buf *bytes.Buffer, header http.Header) {
+func (p *Pretty) Response(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+	ts := time.Now()
+	if resp == nil {
+		fmt.Fprintln(p.Writer, "Response is nil")
+		return nil
+	}
+
+	reqts, _ := ctx.UserData.(time.Time)
+	writeResponse(p.Writer, resp, ts, ts.Sub(reqts))
+	writeHeaders(p.Writer, resp.Header)
+	writeBody(p.Writer, resp.Header.Get("Content-Type"), &resp.Body)
+	p.Writer.Flush()
+
+	return resp
+}
+
+func writeHeaders(buf *bufio.Writer, header http.Header) {
 	if len(header) == 0 {
 		return
 	}
@@ -75,7 +80,7 @@ func (p *Pretty) writeHeaders(buf *bytes.Buffer, header http.Header) {
 	}
 }
 
-func (p *Pretty) writeBody(buf *bytes.Buffer, ct string, body *io.ReadCloser) {
+func writeBody(buf *bufio.Writer, ct string, body *io.ReadCloser) {
 	data, _ := io.ReadAll(*body)
 	*body = io.NopCloser(bytes.NewBuffer(data))
 
@@ -104,7 +109,12 @@ func (p *Pretty) writeBody(buf *bytes.Buffer, ct string, body *io.ReadCloser) {
 
 	switch subTyp {
 	case "json":
-		json.Indent(buf, data, "", "  ")
+		dst := bytePool.Get().(*bytes.Buffer)
+		defer bytePool.Put(dst)
+		dst.Reset()
+
+		json.Indent(dst, data, "", "  ")
+		dst.WriteTo(buf)
 		buf.WriteByte('\n')
 	default:
 		buf.Write(data)
@@ -122,7 +132,7 @@ func seq2one[K, V any](it iter.Seq2[K, V]) iter.Seq[K] {
 	}
 }
 
-func formatBytes(buf *bytes.Buffer, i int) {
+func formatBytes(buf *bufio.Writer, i int) {
 	const unit = 1000
 
 	if i < unit {

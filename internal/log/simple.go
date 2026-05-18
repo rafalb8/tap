@@ -3,7 +3,6 @@ package log
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -11,42 +10,39 @@ import (
 )
 
 type Simple struct {
-	Writer io.Writer
+	Writer *bufio.Writer
 }
 
 func (s *Simple) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	ts := time.Now()
+	ctx.UserData = ts
+
 	if req == nil {
 		fmt.Fprintln(s.Writer, "Request is nil")
 		return nil, nil
 	}
+
+	writeRequest(s.Writer, req, ts)
+	s.Writer.Flush()
+
+	return req, nil
+}
+
+func (s *Simple) Response(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
 	ts := time.Now()
-
-	// print request
-	buf := bufio.NewWriter(s.Writer)
-	writeRequest(buf, req, ts)
-	buf.Flush()
-
-	// make request
-	resp, err := ctx.RoundTrip(req)
-	if err != nil {
-		fmt.Fprintf(s.Writer, "Response error: %v\n", err)
-		return req, nil
+	if resp == nil {
+		fmt.Fprintln(s.Writer, "Response is nil")
+		return nil
 	}
-	end := time.Now()
 
-	// print response
-	writeResponse(buf, resp, end, end.Sub(ts))
-	buf.Flush()
+	reqts, _ := ctx.UserData.(time.Time)
+	writeResponse(s.Writer, resp, ts, ts.Sub(reqts))
+	s.Writer.Flush()
 
-	return req, resp
+	return resp
 }
 
-type buffer interface {
-	WriteByte(c byte) error
-	WriteString(s string) (int, error)
-}
-
-func writeRequest(buf buffer, req *http.Request, ts time.Time) {
+func writeRequest(buf *bufio.Writer, req *http.Request, ts time.Time) {
 	// [10:31:05] POST → https://api.example.com/v1/auth
 	buf.WriteByte('[')
 	buf.WriteString(ts.Format(time.TimeOnly))
@@ -57,7 +53,7 @@ func writeRequest(buf buffer, req *http.Request, ts time.Time) {
 	buf.WriteByte('\n')
 }
 
-func writeResponse(buf buffer, resp *http.Response, ts time.Time, latency time.Duration) {
+func writeResponse(buf *bufio.Writer, resp *http.Response, ts time.Time, latency time.Duration) {
 	// [10:31:05] POST ← https://api.example.com/v1/auth | 200 OK (50ms)
 	buf.WriteByte('[')
 	buf.WriteString(ts.Format(time.TimeOnly))

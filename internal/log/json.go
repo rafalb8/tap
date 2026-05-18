@@ -2,8 +2,6 @@ package log
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
 	"iter"
 	"maps"
 	"net/http"
@@ -15,7 +13,7 @@ import (
 )
 
 type Json struct {
-	Writer io.Writer
+	*json.Encoder
 }
 
 type frame struct {
@@ -29,50 +27,52 @@ type frame struct {
 }
 
 func (j *Json) Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+	ts := time.Now()
+	ctx.UserData = ts
+
 	if req == nil {
-		fmt.Fprintln(j.Writer, "Request is nil")
+		j.Encode("Request is nil")
 		return nil, nil
 	}
-	ts := time.Now()
 
 	it := maps.All(req.Header)
 	if !flag.Verbose {
 		it = filterHeaders(it)
 	}
 
-	// encode request
-	enc := json.NewEncoder(j.Writer)
-	enc.Encode(frame{
+	j.Encode(frame{
 		Timestamp: ts,
 		Method:    req.Method,
 		URL:       req.URL.String(),
 		Headers:   maps.Collect(it),
 	})
 
-	// make request
-	resp, err := ctx.RoundTrip(req)
-	if err != nil {
-		fmt.Fprintf(j.Writer, "Response error: %v\n", err)
-		return req, nil
-	}
-	end := time.Now()
+	return req, nil
+}
 
-	it = maps.All(resp.Header)
+func (j *Json) Response(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+	ts := time.Now()
+	if resp == nil {
+		j.Encode("Response is nil")
+		return nil
+	}
+
+	it := maps.All(resp.Header)
 	if !flag.Verbose {
 		it = filterHeaders(it)
 	}
 
-	// encode response
-	enc.Encode(frame{
-		Timestamp: end,
-		Latency:   end.Sub(ts),
-		Method:    req.Method,
-		URL:       req.URL.String(),
+	reqts, _ := ctx.UserData.(time.Time)
+	j.Encode(frame{
+		Timestamp: ts,
+		Latency:   ts.Sub(reqts),
+		Method:    resp.Request.Method,
+		URL:       resp.Request.URL.String(),
 		Status:    resp.StatusCode,
 		Headers:   maps.Collect(it),
 	})
 
-	return req, resp
+	return resp
 }
 
 func filterHeaders(it iter.Seq2[string, []string]) iter.Seq2[string, []string] {
