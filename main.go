@@ -1,66 +1,15 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
-	"errors"
-	"io"
-	"net"
-	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
-	"strings"
 
-	"github.com/elazarl/goproxy"
+	"github.com/rafalb8/tap/internal/executor"
 	"github.com/rafalb8/tap/internal/flag"
 	"github.com/rafalb8/tap/internal/log"
+	"github.com/rafalb8/tap/internal/server"
 )
-
-type Logger interface {
-	Request(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response)
-	Response(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response
-}
-
-func NewLogger(w io.Writer) Logger {
-	switch {
-	case flag.Json:
-		return &log.Json{Encoder: json.NewEncoder(w)}
-	case flag.Simple:
-		return &log.Simple{Writer: bufio.NewWriter(w)}
-	default:
-		return &log.Pretty{Writer: bufio.NewWriter(w)}
-	}
-}
-
-func StartServer(middleware Logger) (*http.Server, error) {
-	prxy := goproxy.NewProxyHttpServer()
-	prxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
-	prxy.OnRequest().DoFunc(middleware.Request)
-	prxy.OnResponse().DoFunc(middleware.Response)
-
-	// Find free port
-	l, err := net.Listen("tcp", ":0")
-	if err != nil {
-		return nil, err
-	}
-
-	srv := &http.Server{Handler: prxy, Addr: l.Addr().String()}
-	idx := strings.LastIndex(srv.Addr, ":")
-	if idx < 0 {
-		return nil, errors.New("missing port")
-	}
-	srv.Addr = "127.0.0.1" + srv.Addr[idx:]
-
-	go func() {
-		err = srv.Serve(l)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			panic(err)
-		}
-	}()
-	return srv, nil
-}
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -76,30 +25,17 @@ func main() {
 		w = f
 	}
 
-	srv, err := StartServer(NewLogger(w))
+	srv, err := server.New(log.New(w))
 	if err != nil {
 		panic(err)
 	}
 
-	cmd := exec.CommandContext(ctx, flag.Name, flag.Args...)
-	cmd.Env = append(os.Environ(),
-		"SSL_CERT_FILE="+flag.CertFile,
-		"ALL_PROXY="+srv.Addr,
-		"NO_PROXY=localhost,127.0.0.1",
-	)
-
-	if flag.Output != "" {
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
-
-	err = cmd.Run()
+	err = executor.Run(ctx, srv.Addr)
 	if err != nil {
 		panic(err)
 	}
 
-	err = srv.Shutdown(ctx)
+	err = srv.Shutdown(context.Background())
 	if err != nil {
 		panic(err)
 	}
